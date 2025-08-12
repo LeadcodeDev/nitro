@@ -1,18 +1,19 @@
 import 'package:nitro/http.dart';
 import 'package:nitro/nitro.dart';
+import 'package:nitro/src/http/middlewares/bodyparser.dart';
 import 'package:nitro/src/http/middlewares/inject_http_context.dart';
 import 'package:nitro/src/http/middlewares/wrap_middleware.dart';
-import 'package:nitro/src/http/router/http_method.dart';
-import 'package:nitro/src/http/router/route.dart';
 import 'package:nitro/src/http/utils.dart';
 import 'package:nitro/src/nitro/contracts/server.dart';
 import 'package:shelf/shelf.dart' as shelf;
 import 'package:shelf/shelf_io.dart';
+import 'package:shelf_router/shelf_router.dart';
+import 'package:vine/vine.dart';
 
 extension HttpNitro on Nitro {
   NitroHttpServer
   createHttpServer<T extends HttpContext, M extends Middleware>({
-    required HttpRouter<T> router,
+    required dynamic Function(HttpRouter<T>) router,
     T Function()? context,
     List<M Function()> middlewares = const [],
     HttpConfig Function()? config,
@@ -29,12 +30,12 @@ extension HttpNitro on Nitro {
 final class NitroHttpServer<T extends HttpContext, M extends Middleware>
     implements NitroServer {
   final T Function()? _factoryContext;
-  final HttpRouter<T> _router;
+  final void Function(HttpRouter<T>) _router;
   final List<M> _middlewares;
   final HttpConfig Function()? _config;
 
   NitroHttpServer({
-    required HttpRouter<T> router,
+    required Function(HttpRouter<T>) router,
     T Function()? factoryContext,
     List<M> middlewares = const [],
     HttpConfig Function()? config,
@@ -49,39 +50,44 @@ final class NitroHttpServer<T extends HttpContext, M extends Middleware>
 
     final config = (_config != null ? _config() : HttpConfig.defaultConfig());
 
-    shelf.Pipeline pipeline = const shelf.Pipeline().addMiddleware(
-      withNitroContext(_factoryContext ?? HttpContext.new, _router),
-    );
+    final ctxFactory = _factoryContext ?? HttpContext.new;
+    shelf.Pipeline applyMiddlewares(shelf.Pipeline pipeline) {
+      shelf.Pipeline pip = pipeline
+          .addMiddleware(shelf.logRequests())
+          .addMiddleware(withNitroContext(ctxFactory))
+          .addMiddleware(bodyparser());
 
-    for (final middleware in _middlewares) {
-      pipeline = pipeline.addMiddleware(
-        (request) => wrapMiddleware(middleware.handle)(request),
-      );
+      for (final middleware in _middlewares) {
+        pip = pipeline.addMiddleware(
+          (request) => wrapMiddleware(middleware.handle)(request),
+        );
+      }
+
+      return pip;
     }
 
-    final handler = pipeline.addHandler((request) async {
-      final handler = _router.dump.where(
-        (route) => route.method == HttpMethod.wrap(request.method),
-      );
+    final router = Router();
+    final nitroHttpRouter = HttpRouter<T>(applyMiddlewares);
+    _router(nitroHttpRouter);
 
-      if (handler.firstOrNull case final InternalRoute<T> route) {
+    for (final route in nitroHttpRouter.dump) {
+      route.wrapIntoShelfRoute(router, (request, handler) async {
         final ctx = request.context[nitroContextKey] as T;
-        final result = await route.handler(ctx);
+        try {
+          final result = await handler(ctx);
 
-        if (result != null) {
-          if (result is! Response) {
+          if (result != null && result is! Response) {
             ctx.response.body = result;
+            ctx.response.isComplete = true;
           }
-
-          ctx.response.isComplete = true;
+        } on VineValidationException catch (error) {
+          ctx.response.badRequest(body: error.message);
         }
 
         return wrapResponse(ctx.response);
-      }
+      });
+    }
 
-      return shelf.Response.notFound('Route not found');
-    });
-
-    await serve(handler, config.host, config.port, shared: true);
+    await serve(router.call, config.host, config.port, shared: true);
   }
 }

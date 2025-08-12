@@ -1,7 +1,9 @@
 import 'dart:convert';
 
 import 'package:nitro/http.dart';
+import 'package:nitro/src/http/context/params.dart';
 import 'package:shelf/shelf.dart' as shelf;
+import 'package:shelf_router/shelf_router.dart';
 
 const nitroContextKey = 'nitro.ctx';
 const nitroRouterKey = 'nitro.router';
@@ -15,6 +17,12 @@ String serializeResponse(dynamic payload) {
 }
 
 shelf.Response wrapResponse(Response? response) {
+  if (response case Response response) {
+    if (response.body is Map || response.body is List) {
+      response.headers.addAll({'Content-Type': 'application/json'});
+    }
+  }
+
   return switch (response) {
     Response response => shelf.Response(
       response.statusCode,
@@ -25,13 +33,14 @@ shelf.Response wrapResponse(Response? response) {
   };
 }
 
-HttpContext createContext<T extends HttpContext>(
+Future<HttpContext> createContext<T extends HttpContext>(
   T Function() factory,
-  request,
-) {
+  shelf.Request request,
+) async {
   final response = Response()..headers.addAll(request.headers);
 
   return factory()
-    ..request = Request.wrap(request)
-    ..response = response;
+    ..request = await Request.wrap(request)
+    ..response = response
+    ..params = Params(request.params);
 }
