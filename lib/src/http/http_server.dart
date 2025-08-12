@@ -1,11 +1,11 @@
 import 'package:nitro/http.dart';
-import 'package:nitro/server.dart';
+import 'package:nitro/nitro.dart';
 import 'package:nitro/src/http/middlewares/inject_http_context.dart';
 import 'package:nitro/src/http/middlewares/wrap_middleware.dart';
 import 'package:nitro/src/http/router/http_method.dart';
 import 'package:nitro/src/http/router/route.dart';
 import 'package:nitro/src/http/utils.dart';
-import 'package:nitro/src/server/contracts/server.dart';
+import 'package:nitro/src/nitro/contracts/server.dart';
 import 'package:shelf/shelf.dart' as shelf;
 import 'package:shelf/shelf_io.dart';
 
@@ -15,11 +15,13 @@ extension HttpNitro on Nitro {
     required HttpRouter<T> router,
     T Function()? context,
     List<M Function()> middlewares = const [],
+    HttpConfig Function()? config,
   }) {
     return NitroHttpServer<T, M>(
       factoryContext: context,
       router: router,
       middlewares: middlewares.map((middleware) => middleware()).toList(),
+      config: config,
     );
   }
 }
@@ -29,17 +31,24 @@ final class NitroHttpServer<T extends HttpContext, M extends Middleware>
   final T Function()? _factoryContext;
   final HttpRouter<T> _router;
   final List<M> _middlewares;
+  final HttpConfig Function()? _config;
 
   NitroHttpServer({
     required HttpRouter<T> router,
     T Function()? factoryContext,
     List<M> middlewares = const [],
+    HttpConfig Function()? config,
   }) : _router = router,
        _middlewares = middlewares,
-       _factoryContext = factoryContext;
+       _factoryContext = factoryContext,
+       _config = config;
 
   @override
   Future<void> run() async {
+    env.defineOf(HttpEnv.new);
+
+    final config = (_config != null ? _config() : HttpConfig.defaultConfig());
+
     shelf.Pipeline pipeline = const shelf.Pipeline().addMiddleware(
       withNitroContext(_factoryContext ?? HttpContext.new, _router),
     );
@@ -73,6 +82,6 @@ final class NitroHttpServer<T extends HttpContext, M extends Middleware>
       return shelf.Response.notFound('Route not found');
     });
 
-    await serve(handler, 'localhost', 3333, shared: true);
+    await serve(handler, config.host, config.port, shared: true);
   }
 }

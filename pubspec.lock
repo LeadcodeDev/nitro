@@ -81,6 +81,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.6"
+  env_guard:
+    dependency: "direct main"
+    description:
+      name: env_guard
+      sha256: "5e35f02fba1db622fb5fed6763c99b3614ca25447db5f5646eb9f8dd7acbd04a"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.3.1"
   file:
     dependency: transitive
     description:
